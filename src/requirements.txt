@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────
+# RAG Invoice Pipeline — Python Dependencies
+# Install: pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────
+
+# ── Core: data validation & schemas ──────────────────────────────
+pydantic                          # Type-safe data models (InvoiceField, OCRResult, etc.)
+
+# ── Image processing & OCR ───────────────────────────────────────
+Pillow                            # PIL Image loading, resizing, format conversion
+pytesseract                       # Python wrapper for Tesseract-OCR engine
+
+# ── PDF processing ────────────────────────────────────────────────
+PyMuPDF                           # fitz — PDF rendering & native text extraction
+
+# ── HTTP client (Gemini REST API calls) ──────────────────────────
+requests                          # Used in qwentest.py & rag_engine.py for Gemini REST calls
+
+# ── FastAPI backend (main.py) ────────────────────────────────────
+fastapi                           # REST API framework
+uvicorn[standard]                 # ASGI server to run FastAPI
+python-multipart                  # Required by FastAPI for UploadFile / multipart form-data support
+
+
+# ── Vector store & embeddings (vector_store.py) ──────────────────
+chromadb                          # Local persistent vector database (ChromaDB)
+sentence-transformers             # HuggingFace local embeddings (multilingual MiniLM)
+
+# ── Optional: OpenAI embeddings (vector_store.py — OpenAIEmbedder) ──
+openai                            # OpenAI Embeddings API (requires OPENAI_API_KEY env var)
+
+# ── Evaluation script (evaluate.py) ──────────────────────────────
+datasets                          # HuggingFace datasets — loads naver-clova-ix/cord-v2
+
+# ── Security: secrets & environment management ────────────────────
+python-dotenv                     # Loads .env into os.environ at startup (never hardcode secrets)
+

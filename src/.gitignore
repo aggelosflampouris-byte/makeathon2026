@@ -1,0 +1,64 @@
+# =============================================================================
+# .gitignore — Makeathoon 2026 Invoice RAG Pipeline
+# =============================================================================
+
+# ── Secrets & Credentials ─────────────────────────────────────────────────────
+.env
+*.env
+!.env.example          # Keep the safe template in the repo
+config/secrets.json
+secrets/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.virtualenv/
+
+# ── Persistent Vector Store (large binary data) ───────────────────────────────
+chroma_db/
+
+# ── Uploaded / Processed Invoices ─────────────────────────────────────────────
+batch_1/
+batch_2/
+batch_3/
+uploads/
+*.pdf
+*.tiff
+*.tif
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs & Temp Files ─────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.temp
+tmp/

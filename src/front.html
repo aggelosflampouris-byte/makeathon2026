@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinAgent — AI Invoice Intelligence</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', sans-serif; box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; padding: 0; background: #0f1117; }
+
+        /* Sidebar */
+        #sidebar { width: 240px; min-width: 240px; background: #161b27; border-right: 1px solid #1e2636; }
+
+        /* Main layout */
+        #app-root { display: flex; height: 100vh; overflow: hidden; }
+
+        /* Chat area */
+        #chat-area { flex: 1; display: flex; flex-direction: column; background: #0f1117; min-width: 0; }
+        #chat-conversation-log { flex: 1; overflow-y: auto; padding: 24px 0; }
+        .chat-inner { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+
+        /* Document panel — now a modal overlay, not a side column */
+        #doc-modal { display: none; position: fixed; inset: 0; z-index: 60;
+            background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+            align-items: center; justify-content: center; padding: 24px; }
+        #doc-modal.open { display: flex; }
+        #doc-modal-inner { background: #161b27; border: 1px solid #1e2636;
+            border-radius: 16px; width: 100%; max-width: 1200px;
+            height: 90vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 60px rgba(0,0,0,0.6); }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2a3347; border-radius: 10px; }
+
+        /* Bounding boxes */
+        .bbox-overlay { pointer-events: auto; position: absolute; border: 2px solid #ef4444;
+            background: rgba(239,68,68,0.08); transition: all 0.2s; cursor: help; }
+        .drop-zone--over { border-color: #3b82f6 !important; background: #1e3a5f !important; }
+
+        /* Typing dots */
+        .typing-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #6b7280; animation: bounce 1.2s infinite; }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+
+        /* Suggested prompts */
+        .prompt-chip { background: #1e2636; border: 1px solid #2a3347; color: #94a3b8;
+            padding: 6px 12px; border-radius: 20px; font-size: 12px; cursor: pointer;
+            transition: all 0.15s; white-space: nowrap; }
+        .prompt-chip:hover { background: #253047; border-color: #3b82f6; color: #e2e8f0; }
+
+        /* History item */
+        .hist-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+            border-radius: 8px; cursor: pointer; transition: background 0.15s; }
+        .hist-item:hover { background: #1e2636; }
+    </style>
+</head>
+
+<body>
+<div id="app-root">
+
+  <!-- ═══ LEFT SIDEBAR ═══ -->
+  <aside id="sidebar" class="flex flex-col overflow-hidden">
+
+    <!-- Logo -->
+    <div class="px-4 py-5 border-b border-[#1e2636]">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white text-xs font-bold">F</div>
+        <span class="text-white font-semibold text-sm tracking-tight">FinAgent</span>
+        <span class="ml-auto w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="px-3 py-4 border-b border-[#1e2636]">
+      <div id="drop-zone" class="border border-dashed border-[#2a3347] rounded-xl p-4 text-center cursor-pointer hover:border-blue-500 transition-colors">
+        <svg class="mx-auto mb-1.5 h-5 w-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        <p class="text-xs text-slate-400 font-medium">Drop invoice or click</p>
+        <p class="text-[10px] text-slate-600 mt-0.5">PDF · PNG · JPG · TIFF</p>
+        <input type="file" id="file-input" class="hidden" accept="image/*,.pdf">
+      </div>
+    </div>
+
+    <!-- Recent History -->
+    <div class="flex-1 overflow-y-auto px-3 py-3">
+      <p class="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-2 px-1">Recent</p>
+      <div id="recent-history">
+        <p class="text-[11px] text-slate-600 italic px-2 py-3">No documents yet</p>
+      </div>
+    </div>
+
+    <!-- CSV Import -->
+    <div class="px-3 py-3 border-t border-[#1e2636]">
+      <input type="file" id="csv-file-input" class="hidden" accept=".csv,text/csv">
+      <button id="import-csv-btn" onclick="triggerCsvImport()"
+        class="w-full py-2 bg-[#1e2636] hover:bg-[#253047] border border-[#2a3347] text-slate-300 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        Bank Statement CSV
+      </button>
+    </div>
+
+  </aside>
+
+  <!-- ═══ MAIN CHAT AREA ═══ -->
+  <div id="chat-area">
+
+    <!-- Chat header bar -->
+    <div class="flex items-center justify-between px-5 py-3 border-b border-[#1e2636] flex-shrink-0">
+      <div class="flex items-center gap-2">
+        <span class="text-white text-sm font-semibold">Invoice Intelligence Agent</span>
+        <span id="doc-badge" class="hidden text-[10px] bg-blue-600/20 text-blue-400 border border-blue-600/30 px-2 py-0.5 rounded-full font-medium"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="toggleDocPanel()" id="doc-panel-btn" title="Toggle document view"
+          class="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-[#1e2636] rounded-lg transition-colors hidden">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        </button>
+        <button onclick="clearChat()" class="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-[#1e2636] rounded-lg transition-colors" title="Clear chat">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div id="chat-conversation-log">
+      <div class="chat-inner">
+
+        <!-- Loader (hidden by default) -->
+        <div id="loader" class="hidden flex items-center gap-3 py-6">
+          <div class="w-7 h-7 rounded-full bg-blue-600/20 border border-blue-600/40 flex items-center justify-center text-blue-400 text-[10px] font-bold flex-shrink-0">AI</div>
+          <div class="bg-[#1e2636] rounded-xl rounded-tl-none px-4 py-3">
+            <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+          </div>
+        </div>
+
+        <!-- Welcome message -->
+        <div class="flex gap-3 items-start mb-4">
+          <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">AI</div>
+          <div class="bg-[#1e2636] text-slate-300 rounded-xl rounded-tl-none px-4 py-3 text-sm leading-relaxed max-w-[85%]">
+            Hello! I'm your <strong class="text-white">Invoice Intelligence Agent</strong>.<br>
+            Upload an invoice on the left and I'll extract all financial data. Then ask me anything about it.
+          </div>
+        </div>
+
+
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="flex-shrink-0 px-4 py-4 border-t border-[#1e2636]">
+      <form onsubmit="handleChatSubmit(event)" class="chat-inner">
+        <div class="flex items-center gap-2 bg-[#1e2636] border border-[#2a3347] rounded-xl px-4 py-2.5 focus-within:border-blue-500 transition-colors">
+          <input type="text" id="ai-query" placeholder="Ask about the invoice…"
+            class="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none"/>
+          <button type="submit" class="p-1.5 text-blue-500 hover:text-blue-400 transition-colors flex-shrink-0">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
+          </button>
+        </div>
+        <p class="text-[10px] text-slate-600 text-center mt-2">FinAgent · Powered by Gemini · RAG-enabled</p>
+      </form>
+    </div>
+
+  </div>
+
+  <!-- ═══ DOCUMENT MODAL (opens after upload) ═══ -->
+  <div id="doc-modal">
+    <div id="doc-modal-inner">
+
+      <!-- Modal header -->
+      <div class="px-5 py-3 border-b border-[#1e2636] flex items-center justify-between flex-shrink-0">
+        <div class="flex items-center gap-3">
+          <span class="text-sm font-semibold text-slate-200">Extracted Document</span>
+          <span id="doc-badge" class="text-[10px] bg-blue-600/20 text-blue-400 border border-blue-600/30 px-2 py-0.5 rounded-full font-medium"></span>
+        </div>
+        <button onclick="toggleDocPanel()" class="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-[#1e2636] rounded-lg transition-colors">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Two-column resizable body -->
+      <div class="flex flex-1 overflow-hidden min-h-0" id="doc-columns">
+
+        <!-- Left: image -->
+        <div id="image-preview-container" class="hidden flex-shrink-0 border-r border-[#1e2636] overflow-y-auto relative" style="width:40%">
+          <img id="image-preview" src="" alt="Preview" class="w-full h-auto">
+          <div id="bbox-container" class="absolute top-0 left-0 w-full h-full pointer-events-none z-10"></div>
+        </div>
+
+        <!-- Drag handle -->
+        <div id="col-resizer" class="hidden w-[5px] flex-shrink-0 bg-[#1e2636] hover:bg-blue-600 cursor-col-resize transition-colors select-none"></div>
+
+        <!-- Right: stats + table -->
+        <div id="results-content" class="hidden flex-1 flex flex-col overflow-hidden">
+
+          <!-- Stats strip -->
+          <div class="flex border-b border-[#1e2636] flex-shrink-0">
+            <div class="flex-1 px-4 py-3 border-r border-[#1e2636]">
+              <p class="text-[9px] text-slate-500 uppercase tracking-wider">Total</p>
+              <p id="res-total" class="text-lg font-bold text-blue-400 mt-0.5">—</p>
+            </div>
+            <div class="flex-1 px-4 py-3 border-r border-[#1e2636]">
+              <p class="text-[9px] text-slate-500 uppercase tracking-wider">Items</p>
+              <p id="res-items-count" class="text-lg font-bold text-slate-200 mt-0.5">—</p>
+            </div>
+            <div class="flex-1 px-4 py-3 border-r border-[#1e2636]">
+              <p class="text-[9px] text-slate-500 uppercase tracking-wider">Confidence</p>
+              <p id="res-conf" class="text-lg font-bold text-slate-200 mt-0.5">—</p>
+            </div>
+            <div class="flex-1 px-4 py-3">
+              <p class="text-[9px] text-slate-500 uppercase tracking-wider">Doc ID</p>
+              <p id="res-id" class="text-[10px] font-mono text-slate-400 mt-0.5 truncate">—</p>
+            </div>
+          </div>
+
+          <!-- Extracted fields table -->
+          <div class="flex-1 overflow-auto">
+            <table class="w-full text-sm text-left border-collapse">
+              <thead class="sticky top-0 bg-[#161b27] text-[11px] text-slate-400 uppercase font-semibold">
+                <tr>
+                  <th class="px-5 py-3 border-b border-[#1e2636] w-[45%]">Field / Description</th>
+                  <th class="px-5 py-3 border-b border-[#1e2636]">Value</th>
+                  <th class="px-5 py-3 border-b border-[#1e2636] text-right">Confidence</th>
+                </tr>
+              </thead>
+              <tbody id="res-line-items" class="divide-y divide-[#1e2636] text-slate-300"></tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+    <!-- CSV Import Modal -->
+    <div id="csv-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.55);backdrop-filter:blur(4px)">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-center flex-shrink-0">
+                <div>
+                    <h2 class="font-bold text-sm tracking-tight">Bank Statement Import</h2>
+                    <p id="csv-modal-subtitle" class="text-[10px] text-slate-400 mt-0.5">Parsed CSV — reconciling against loaded invoices</p>
+                </div>
+                <button onclick="closeCsvModal()" class="p-1.5 hover:bg-slate-700 rounded-lg transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <!-- Summary KPIs -->
+            <div id="csv-summary" class="px-6 py-4 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 border-b border-slate-100 flex-shrink-0">
+                <!-- injected by JS -->
+            </div>
+
+            <!-- Table -->
+            <div class="flex-1 overflow-auto">
+                <table class="w-full text-left text-xs border-collapse">
+                    <thead class="bg-slate-100 text-slate-500 uppercase text-[10px] font-bold sticky top-0">
+                        <tr id="csv-thead-row"></tr>
+                    </thead>
+                    <tbody id="csv-tbody" class="divide-y divide-slate-100 text-slate-700">
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="px-6 py-3 border-t border-slate-100 bg-slate-50 flex justify-between items-center flex-shrink-0 text-[10px] text-slate-400">
+                <span id="csv-footer-note">🟡 Yellow rows = amount matched against a loaded invoice</span>
+                <button onclick="closeCsvModal()" class="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-semibold hover:bg-slate-700 transition-colors">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Application Logic Controller -->
+    <script>
+        // Core DOM References
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const resultsContent = document.getElementById('results-content');
+        const loader = document.getElementById('loader');
+        const imagePreview = document.getElementById('image-preview');
+        const bboxContainer = document.getElementById('bbox-container');
+        const historyContainer = document.getElementById('recent-history');
+        const chatConversationLog = document.getElementById('chat-conversation-log');
+
+        let lastData = null;
+        let currentDocumentId = null;  // tracks the active document for filtered RAG queries
+        let history = [];
+        let isChatbotExpanded = false;
+        let isChatLoading = false;
+
+        // ── Multi-turn conversation state ──────────────────────────────────────
+        // Each entry: { role: 'user' | 'assistant', content: <string> }
+        // Sent to /api/query so Gemini can resolve follow-up references.
+        const MAX_HISTORY_TURNS = 20;  // cap at 20 turns (10 exchanges) to keep payload small
+        let conversationHistory = [];
+
+        function pushTurn(role, content) {
+            conversationHistory.push({ role, content });
+            // Trim oldest pairs if we exceed the cap (always keep pairs)
+            while (conversationHistory.length > MAX_HISTORY_TURNS) {
+                conversationHistory.splice(0, 2);  // remove oldest user+assistant pair
+            }
+        }
+
+        function clearChat() {
+            conversationHistory = [];
+            chatConversationLog.innerHTML = `<div class="chat-inner">
+                <div class="flex gap-3 items-start mb-4">
+                    <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">AI</div>
+                    <div class="bg-[#1e2636] text-slate-300 rounded-xl rounded-tl-none px-4 py-3 text-sm leading-relaxed">
+                        Conversation cleared. Ask me anything about your invoice.
+                    </div>
+                </div></div>`;
+        }
+
+        function toggleDocPanel() {
+            document.getElementById('doc-modal').classList.toggle('open');
+        }
+
+        function openDocPanel() {
+            // Show the doc-panel-btn in the header
+            const btn = document.getElementById('doc-panel-btn');
+            if (btn) btn.classList.remove('hidden');
+            // Show drag handle
+            document.getElementById('col-resizer').classList.remove('hidden');
+            // Open the modal
+            document.getElementById('doc-modal').classList.add('open');
+        }
+
+        // ── Column resize logic ──────────────────────────────────────────────────
+        (function () {
+            const resizer   = document.getElementById('col-resizer');
+            const leftCol   = document.getElementById('image-preview-container');
+            const container = document.getElementById('doc-columns');
+            let isResizing  = false;
+
+            resizer.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                const rect     = container.getBoundingClientRect();
+                const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
+                // Clamp between 20% and 75%
+                const clamped  = Math.min(75, Math.max(20, newWidth));
+                leftCol.style.width = clamped + '%';
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (!isResizing) return;
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            });
+        })();
+
+        // --- OCR Logic ---
+        dropZone.onclick = () => fileInput.click();
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drop-zone--over'); });
+        ['dragleave', 'dragend'].forEach(type => dropZone.addEventListener(type, () => dropZone.classList.remove('drop-zone--over')));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drop-zone--over');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+        fileInput.onchange = (e) => { if (e.target.files.length) handleFile(e.target.files[0]); };
+
+        function handleFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const isPdf = file.type === 'application/pdf';
+                // For PDFs, we can't show a preview directly, so we hide the image container.
+                // The backend will process it, and we'll still see the results table.
+                imagePreview.src = isPdf ? '' : e.target.result;
+                document.getElementById('image-preview-container').classList.toggle('hidden', isPdf);
+                processFile(file);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function processFile(file) {
+            loader.classList.remove('hidden');
+            resultsContent.classList.add('hidden');
+            bboxContainer.innerHTML = ''; // Clear old bounding boxes
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                lastData = data;
+                currentDocumentId = data.document_id;
+
+                // Show document badge in header
+                const badge = document.getElementById('doc-badge');
+                if (badge) { badge.textContent = file.name; badge.classList.remove('hidden'); }
+
+                // Open the right doc panel
+                openDocPanel();
+
+                // Add to sidebar history
+                addToHistory(data, file.name);
+
+                // Step 2: Automatically ingest into vector store after successful OCR
+                fetch('http://127.0.0.1:8000/api/ingest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_id: data.document_id, ocr_result: data })
+                }).then(r => r.json())
+                    .then(r => console.log(`[RAG] Ingested ${r.chunks_stored} chunks for doc ${data.document_id}`))
+                    .catch(e => console.warn('[RAG] Ingest failed (non-critical):', e));
+
+                // Wait for image load before drawing bounding boxes
+                imagePreview.onload = () => {
+                    renderResults(data);
+                    drawBoundingBoxes(data);
+                };
+                if (imagePreview.complete || file.type === 'application/pdf') {
+                    renderResults(data);
+                    drawBoundingBoxes(data);
+                }
+
+            } catch (error) {
+                console.error("Processing Error:", error);
+                alert("An error occurred during document processing: " + error.message);
+                loader.classList.add('hidden');
+            }
+        }
+
+        function drawBoundingBoxes(data) {
+            bboxContainer.innerHTML = '';
+            // Don't try to draw boxes if there's no image preview (e.g., for PDFs)
+            if (!imagePreview.naturalWidth) return;
+
+            // Calculate scaling factors in case the displayed image is smaller than the original
+            const scaleX = imagePreview.clientWidth / imagePreview.naturalWidth;
+            const scaleY = imagePreview.clientHeight / imagePreview.naturalHeight;
+
+            const allFields = [
+                data.extracted_fields.supplier_name,
+                data.extracted_fields.header,
+                data.extracted_fields.footer,
+                data.extracted_fields.total_amount,
+                ...(data.extracted_fields.line_items || [])
+            ].filter(field => field && field.bbox); // Filter out null fields or fields without a bbox
+
+            allFields.forEach(field => {
+                const [x1, y1, x2, y2] = field.bbox;
+                const box = document.createElement('div');
+                box.className = 'bbox-overlay';
+                box.dataset.bbox = field.bbox.join(','); // Store bbox for highlighting
+                box.style.left = `${x1 * scaleX}px`;
+                box.style.top = `${y1 * scaleY}px`;
+                box.style.width = `${(x2 - x1) * scaleX}px`;
+                box.style.height = `${(y2 - y1) * scaleY}px`;
+                box.title = `${field.field_name}: ${field.value}`;
+                bboxContainer.appendChild(box);
+            });
+        }
+
+        function renderResults(data) {
+            loader.classList.add('hidden');
+            resultsContent.classList.remove('hidden');
+
+            document.getElementById('res-id').textContent = data.document_id;
+
+            const totalAmount = data.extracted_fields.total_amount;
+            document.getElementById('res-total').textContent = totalAmount ? `€${totalAmount.value}` : 'N/A';
+
+            const tesseractConf = data.processing_metadata.tesseract_confidence;
+            document.getElementById('res-conf').textContent = tesseractConf ? `${(tesseractConf).toFixed(0)}%` : 'N/A';
+
+            const lineItems = data.extracted_fields.line_items || [];
+            document.getElementById('res-items-count').textContent = lineItems.length;
+
+            const tbody = document.getElementById('res-line-items');
+            if (lineItems.length > 0) {
+            tbody.innerHTML = lineItems.map(item => `
+                    <tr class="hover:bg-[#253047] cursor-pointer transition-colors" 
+                        data-bbox="${item.bbox ? item.bbox.join(',') : ''}" 
+                        onmouseover="highlightBox(this)" 
+                        onmouseout="unhighlightBox()">
+                        <td class="px-3 py-2 font-medium text-slate-200">${item.field_name}</td>
+                        <td class="px-3 py-2 text-slate-300">€${item.value}</td>
+                        <td class="px-3 py-2 text-right font-mono text-slate-400">${(item.confidence * 100).toFixed(0)}%</td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = `<tr><td colspan="3" class="text-center italic text-slate-400 p-4">No line items found.</td></tr>`;
+            }
+        }
+
+        function highlightBox(row) {
+            const bbox_str = row.dataset.bbox;
+            if (!bbox_str) return;
+            document.querySelectorAll('.bbox-overlay').forEach(overlay => {
+                if (overlay.dataset.bbox === bbox_str) {
+                    overlay.style.background = 'rgba(255, 255, 0, 0.4)';
+                    overlay.style.borderColor = '#eab308'; // yellow-500
+                    overlay.style.zIndex = '20';
+                }
+            });
+        }
+
+        function unhighlightBox() {
+            document.querySelectorAll('.bbox-overlay').forEach(overlay => {
+                overlay.style.background = 'rgba(0, 255, 255, 0.1)';
+                overlay.style.borderColor = '#ff0000';
+                overlay.style.zIndex = '10';
+            });
+        }
+
+
+
+        function clearHistory() {
+            history = [];
+            historyContainer.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm italic">No recent documents</div>';
+        }
+
+        // --- Recent Activity: add, render, select ---
+
+        function addToHistory(data, fileName) {
+            // Avoid duplicates — update existing entry if same document_id
+            const existingIdx = history.findIndex(h => h.document_id === data.document_id);
+            const entry = {
+                document_id: data.document_id,
+                fileName: fileName,
+                timestamp: new Date(),
+                data: data,
+                total: data.extracted_fields?.total_amount?.value || 'N/A',
+                items: (data.extracted_fields?.line_items || []).length,
+                supplier: data.extracted_fields?.supplier_name?.value || null,
+            };
+            if (existingIdx >= 0) {
+                history[existingIdx] = entry;
+            } else {
+                history.unshift(entry);  // newest first
+            }
+            renderHistoryList();
+        }
+
+        function renderHistoryList() {
+            if (history.length === 0) {
+                historyContainer.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm italic">No recent documents</div>';
+                return;
+            }
+            historyContainer.innerHTML = history.map((entry, idx) => {
+                const isActive = entry.document_id === currentDocumentId;
+                const timeStr = entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const shortName = entry.fileName.length > 22
+                    ? entry.fileName.substring(0, 19) + '...'
+                    : entry.fileName;
+                const supplierLine = entry.supplier
+                    ? `<p class="text-[10px] text-slate-400 truncate">${entry.supplier}</p>`
+                    : '';
+                return `
+                <div onclick="selectHistoryItem(${idx})"
+                     class="px-4 py-3 border-b border-slate-100 cursor-pointer transition-colors hover:bg-blue-50
+                            ${isActive ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}">
+                    <div class="flex justify-between items-start gap-2">
+                        <div class="min-w-0 flex-1">
+                            <p class="text-xs font-semibold text-slate-700 truncate" title="${entry.fileName}">
+                                ${isActive ? '● ' : ''}${shortName}
+                            </p>
+                            ${supplierLine}
+                            <p class="text-[10px] text-slate-400 mt-0.5">${timeStr} &middot; ${entry.items} items</p>
+                        </div>
+                        <span class="text-xs font-bold ${isActive ? 'text-blue-600' : 'text-slate-500'} flex-shrink-0">
+                            €${entry.total}
+                        </span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function selectHistoryItem(idx) {
+            const entry = history[idx];
+            if (!entry) return;
+
+            // Switch active document context
+            currentDocumentId = entry.document_id;
+            lastData = entry.data;
+
+            // Restore results panel
+            renderResults(entry.data);
+
+            // Hide image preview (we don't store the raw image bytes, only the data)
+            document.getElementById('image-preview-container').classList.add('hidden');
+            document.getElementById('bbox-container').innerHTML = '';
+
+            // Highlight the selected entry in the sidebar
+            renderHistoryList();
+
+            // Notify in chat
+            const total = entry.total !== 'N/A' ? `€${entry.total}` : 'N/A';
+            addChatMessage('ai',
+                `📄 Switched to: ${entry.fileName} — Total: ${total}, ${entry.items} line item(s). ` +
+                `Chat queries are now filtered to this document.`);
+        }
+
+        // --- Chatbot Logic (RAG-powered) ---
+
+        function handleChatSubmit(event) {
+            event.preventDefault();
+            if (isChatLoading) return;
+            const input = document.getElementById('ai-query');
+            const text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+            sendToRAG(text);
+        }
+
+        function askAI(topic) {
+            if (isChatLoading) return;
+            const queries = {
+                'tax_audit': 'What are the tax compliance details and VAT amounts on this invoice?',
+                'balance_sheet': 'Summarise all financial amounts and line items for a CFO review.'
+            };
+            sendToRAG(queries[topic] || topic);
+        }
+
+        async function sendToRAG(question) {
+            addChatMessage('user', question);
+            showTypingIndicator();
+            isChatLoading = true;
+            pushTurn('user', question);
+
+            const body = {
+                question,
+                conversation_history: conversationHistory.slice(0, -1),
+            };
+            if (currentDocumentId) body.document_id = currentDocumentId;
+
+            // Create the AI bubble immediately (empty) so tokens stream into it
+            const bubbleId = 'stream-bubble-' + Date.now();
+            let fullAnswer = '';
+            let modelUsed = '';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/query/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    const errMsg = `⚠️ Error: ${err.detail || 'Unknown error from server.'}`;
+                    removeTypingIndicator();
+                    addChatMessage('ai', errMsg);
+                    pushTurn('assistant', errMsg);
+                    return;
+                }
+
+                // Remove typing indicator as soon as the stream opens
+                removeTypingIndicator();
+
+                // Insert the empty streaming bubble into the chat
+                const bubbleHtml = `<div id="${bubbleId}" class="flex gap-2 items-start max-w-[95%]">
+                    <div class="w-6 h-6 rounded-full bg-blue-600 text-white flex-shrink-0 flex items-center justify-center font-bold text-[9px]">AI</div>
+                    <div id="${bubbleId}-text" class="bg-slate-100 p-3 rounded-xl rounded-tl-none text-slate-700 leading-relaxed text-xs"></div>
+                </div>`;
+                chatConversationLog.insertAdjacentHTML('beforeend', bubbleHtml);
+                const textEl = document.getElementById(`${bubbleId}-text`);
+
+                // Read the SSE stream token by token
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let sseBuffer = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    sseBuffer += decoder.decode(value, { stream: true });
+
+                    // Each SSE frame ends with \n\n
+                    const frames = sseBuffer.split('\n\n');
+                    sseBuffer = frames.pop(); // Keep incomplete frame in buffer
+
+                    for (const frame of frames) {
+                        const line = frame.trim();
+                        if (!line.startsWith('data:')) continue;
+                        try {
+                            const parsed = JSON.parse(line.slice(5).trim());
+                            if (parsed.token) {
+                                fullAnswer += parsed.token;
+                                // Re-render the whole accumulated answer on each token
+                                // so formatAIMessage() (follow-up pill) works correctly
+                                textEl.innerHTML = formatAIMessage(fullAnswer);
+                                chatConversationLog.scrollTop = chatConversationLog.scrollHeight;
+                            }
+                            if (parsed.done) {
+                                modelUsed = parsed.model || '';
+                            }
+                        } catch (_) { /* skip malformed frames */ }
+                    }
+                }
+
+                // Append model tag after stream ends
+                if (modelUsed && modelUsed !== 'none') {
+                    textEl.insertAdjacentHTML('beforeend',
+                        `<span class="text-[8px] text-slate-400 ml-1">${modelUsed}</span>`);
+                }
+
+                pushTurn('assistant', fullAnswer);
+
+            } catch (e) {
+                removeTypingIndicator();
+                const errMsg = '⚠️ Could not reach the server. Is main.py running?';
+                addChatMessage('ai', errMsg);
+                pushTurn('assistant', errMsg);
+                console.error('[RAG] Stream error:', e);
+            } finally {
+                isChatLoading = false;
+                chatConversationLog.scrollTop = chatConversationLog.scrollHeight;
+            }
+        }
+
+        function showTypingIndicator() {
+            const html = `<div id="typing-indicator" class="chat-inner mb-3">
+                <div class="flex gap-3 items-start">
+                    <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">AI</div>
+                    <div class="bg-[#1e2636] px-4 py-3 rounded-xl rounded-tl-none text-slate-500 text-xs flex gap-1 items-center">
+                        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+                    </div>
+                </div></div>`;
+            chatConversationLog.insertAdjacentHTML('beforeend', html);
+            chatConversationLog.scrollTop = chatConversationLog.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const el = document.getElementById('typing-indicator');
+            if (el) el.remove();
+        }
+
+        function addChatMessage(sender, text, sources = [], modelUsed = '') {
+            if (sender === 'user') {
+                const html = `<div class="chat-inner mb-3">
+                    <div class="flex gap-3 items-start justify-end">
+                        <div class="bg-blue-600 px-4 py-3 rounded-xl rounded-tr-none text-white leading-relaxed text-sm max-w-[80%]">${escapeHtml(text)}</div>
+                        <div class="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 text-[10px] font-bold flex-shrink-0">U</div>
+                    </div></div>`;
+                chatConversationLog.insertAdjacentHTML('beforeend', html);
+            } else {
+                let sourcesHtml = '';
+                if (sources && sources.length > 0) {
+                    const pills = sources.map(s =>
+                        `<span class="inline-block bg-[#253047] text-slate-400 rounded px-1.5 py-0.5 text-[9px] font-mono mr-1 mb-1" title="${escapeHtml(s.text)}">
+                            [${s.chunk_type}] dist=${s.distance.toFixed(2)}
+                        </span>`
+                    ).join('');
+                    sourcesHtml = `<details class="mt-2">
+                        <summary class="text-[9px] text-slate-500 cursor-pointer hover:text-slate-300">📎 ${sources.length} source chunks</summary>
+                        <div class="mt-1 pl-1">${pills}</div>
+                    </details>`;
+                }
+                const modelTag = modelUsed && modelUsed !== 'none'
+                    ? `<span class="text-[8px] text-slate-500 ml-1">${modelUsed}</span>` : '';
+
+                const html = `<div class="chat-inner mb-3">
+                    <div class="flex gap-3 items-start">
+                        <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">AI</div>
+                        <div class="bg-[#1e2636] px-4 py-3 rounded-xl rounded-tl-none text-slate-300 leading-relaxed text-sm max-w-[85%]">
+                            ${formatAIMessage(text)}${modelTag}
+                            ${sourcesHtml}
+                        </div>
+                    </div></div>`;
+                chatConversationLog.insertAdjacentHTML('beforeend', html);
+            }
+            chatConversationLog.scrollTop = chatConversationLog.scrollHeight;
+        }
+
+        /**
+         * Splits the AI response into a main answer + optional follow-up question.
+         * Gemini is instructed to end with "💬 *question text*".
+         * The follow-up is rendered as a distinct teal pill so users can clearly
+         * see the AI is inviting them to continue the conversation.
+         */
+        function formatAIMessage(text) {
+            const followUpMarker = '💬';
+            const markerIdx = text.lastIndexOf(followUpMarker);
+
+            if (markerIdx === -1) {
+                // No follow-up question — render the whole text normally
+                return escapeHtml(text);
+            }
+
+            const mainAnswer = text.substring(0, markerIdx).trim();
+            // Strip markdown italics asterisks from the follow-up question text
+            const followUpRaw = text.substring(markerIdx + followUpMarker.length).trim()
+                .replace(/^\*+/, '').replace(/\*+$/, '').trim();
+
+            const mainHtml  = escapeHtml(mainAnswer);
+            const followUpHtml = `
+                <div class="mt-3 pt-2.5 border-t border-slate-200 flex items-start gap-1.5">
+                    <span class="text-base leading-none mt-0.5">💬</span>
+                    <p class="text-[11px] italic text-teal-700 font-medium leading-snug">${escapeHtml(followUpRaw)}</p>
+                </div>`;
+
+            return mainHtml + followUpHtml;
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/\n/g, '<br>');
+        }
+
+        function toggleChatbotWidth() {
+            isChatbotExpanded = !isChatbotExpanded;
+            const middlePanel = document.getElementById('middle-panel');
+            const chatbotPanel = document.getElementById('chatbot-panel');
+            const resizeIcon = document.getElementById('resize-icon');
+
+            if (isChatbotExpanded) {
+                middlePanel.classList.remove('lg:col-span-6');
+                middlePanel.classList.add('lg:col-span-3');
+                chatbotPanel.classList.remove('lg:col-span-3');
+                chatbotPanel.classList.add('lg:col-span-6');
+                // Change icon to "shrink"
+                resizeIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 4v4m0 0h4m-4 0l-7 7m-8 4v-4m0 0H4m0 0l7-7m-7 11v4m0 0h4m-4 0l7-7m8-4v-4m0 0h-4m4 0l-7 7" />`;
+            } else {
+                middlePanel.classList.remove('lg:col-span-3');
+                middlePanel.classList.add('lg:col-span-6');
+                chatbotPanel.classList.remove('lg:col-span-6');
+                chatbotPanel.classList.add('lg:col-span-3');
+                // Change icon back to "expand"
+                resizeIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />`;
+            }
+        }
+
+        // \u2500\u2500 CSV Import Logic (Backend-Powered Reconciliation) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        //
+        // triggerCsvImport is global so the HTML onclick="triggerCsvImport()" can call it.
+        // The script is at the bottom of <body>, so the DOM is already fully parsed here.
+
+        function triggerCsvImport() {
+            var inp = document.getElementById('csv-file-input');
+            if (!inp) { alert('CSV input not found. Please reload the page.'); return; }
+            inp.value = '';   // allow re-selecting the same file
+            inp.click();
+        }
+
+        // Wire the change listener immediately (DOM is ready at bottom of <body>)
+        (function () {
+            var inp = document.getElementById('csv-file-input');
+            if (!inp) { console.error('[CSV] csv-file-input not found in DOM'); return; }
+            inp.addEventListener('change', async function (e) {
+                var file = e.target.files[0];
+                if (!file) return;
+                await sendCsvToBackend(file);
+            });
+            console.log('[CSV] change listener attached');
+        })();
+
+
+        async function sendCsvToBackend(file) {
+            const btn = document.getElementById('import-csv-btn');
+            const origHTML = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg> Reconciling...';
+            }
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('invoice_data', JSON.stringify(
+                    history.map(h => ({ document_id: h.document_id, file_name: h.fileName, total_amount: h.total }))
+                ));
+                const response = await fetch('http://127.0.0.1:8000/api/reconcile', { method: 'POST', body: formData });
+                if (!response.ok) { const err = await response.json(); throw new Error(err.detail || 'HTTP ' + response.status); }
+                const data = await response.json();
+                renderReconciliationModal(file.name, data);
+                const paid   = data.reconciliation.filter(r => r.status === 'PAID').length;
+                const unpaid = data.reconciliation.filter(r => r.status === 'UNPAID').length;
+                if (data.reconciliation.length > 0)
+                    addChatMessage('ai', `📊 Bank reconciliation for "${file.name}": ${paid} PAID ✅  ${unpaid} UNPAID ❌ — ${data.csv_summary.total_rows} transactions processed.`);
+            } catch (err) {
+                console.error('[Reconcile]', err);
+                alert('Reconciliation error: ' + err.message + '\n\nMake sure main.py is running on port 8000.');
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHTML; }
+            }
+        }
+
+        function renderReconciliationModal(fileName, data) {
+            const { reconciliation, csv_summary, csv_rows, match_flags } = data;
+            const headers = csv_summary.headers || [];
+            const amountCols = csv_summary.amount_columns || [];
+
+            document.getElementById('csv-modal-subtitle').textContent =
+                `${fileName} — ${csv_summary.total_rows} transactions`;
+
+            const paid = reconciliation.filter(r => r.status === 'PAID').length;
+            document.getElementById('csv-summary').innerHTML = [
+                { label: 'Transactions',  value: csv_summary.total_rows, color: 'text-slate-700' },
+                { label: 'Total Debits',  value: `€${csv_summary.total_debits.toFixed(2)}`,  color: 'text-red-600' },
+                { label: 'Total Credits', value: `€${csv_summary.total_credits.toFixed(2)}`, color: 'text-emerald-600' },
+                { label: 'Invoices Paid', value: `${paid} / ${reconciliation.length}`, color: paid > 0 ? 'text-emerald-600' : 'text-slate-400' },
+            ].map(k => `<div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+                    <p class="text-[10px] text-slate-400 uppercase tracking-wider font-bold">${k.label}</p>
+                    <p class="text-base font-bold ${k.color} mt-0.5">${k.value}</p></div>`).join('');
+
+            // Invoice payment status table
+            const reconRows = reconciliation.map(r => {
+                const badge = r.status === 'PAID'
+                    ? `<span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-bold">✅ PAID</span>`
+                    : r.status === 'UNPAID'
+                    ? `<span class="px-2 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px] font-bold">❌ UNPAID</span>`
+                    : `<span class="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-[10px] font-bold">— NO TOTAL</span>`;
+                const tx = r.matched_transaction
+                    ? Object.entries(r.matched_transaction).slice(0, 3).map(([k,v]) => `${k}: ${v}`).join(' · ')
+                    : '—';
+                return `<tr class="border-b border-slate-100 hover:bg-slate-50">
+                    <td class="px-4 py-2 text-xs font-medium text-slate-700">${escapeHtml(r.file_name)}</td>
+                    <td class="px-4 py-2 text-xs font-bold text-blue-600">€${r.invoice_total !== null ? Number(r.invoice_total).toFixed(2) : 'N/A'}</td>
+                    <td class="px-4 py-2">${badge}</td>
+                    <td class="px-4 py-2 text-[10px] text-slate-400 max-w-[200px] truncate" title="${escapeHtml(tx)}">${escapeHtml(tx)}</td></tr>`;
+            }).join('');
+
+            // CSV rows table
+            // The backend already expanded any "JSON DATA" column into clean financial fields
+            // (Invoice №, Date, Client, Seller, Total Amount, etc.).
+            // We only hide leftover non-financial columns: FILE NAME, OCRED TEXT, raw OCR blobs.
+            const NON_FINANCIAL = ['FILE', 'OCR', 'TEXT'];
+            const visibleHeaders = headers.filter(h => {
+                const upper = h.toUpperCase();
+                return !NON_FINANCIAL.some(kw => upper.includes(kw));
+            });
+            
+            if (visibleHeaders.length === 0) {
+                document.getElementById('csv-thead-row').innerHTML = `<th class="px-4 py-4 text-center text-slate-500 font-normal italic">⚠️ No financial columns found to display. (Filtered out non-financial data like File Names and OCR Text)</th>`;
+                document.getElementById('csv-tbody').innerHTML = '';
+            } else {
+                document.getElementById('csv-thead-row').innerHTML =
+                    visibleHeaders.map(h => `<th class="px-4 py-2.5 whitespace-nowrap text-left">${escapeHtml(h)}</th>`).join('');
+                document.getElementById('csv-tbody').innerHTML = (csv_rows || []).map((row, i) => {
+                    const matched = match_flags && match_flags[i] !== null;
+                    const cells = visibleHeaders.map(h => {
+                        const rawVal = String(row[h] ?? '');
+                        const isAmount = amountCols.includes(h);
+                        let display = escapeHtml(rawVal);
+
+                        if (isAmount) {
+                            const n = parseFloat(rawVal.replace(/[^0-9.\-]/g, ''));
+                            display = `<span class="${n < 0 ? 'text-red-600' : 'text-emerald-700'} font-semibold">${display}</span>`;
+                        }
+
+                        const badge = matched && isAmount
+                            ? ` <span class="ml-1 px-1 py-0.5 bg-amber-200 text-amber-800 text-[8px] font-bold rounded">match</span>` : '';
+
+                        // Long text cells: truncate at 200px, show full on hover
+                        const isTruncated = rawVal.length > 30;
+                        const tdClass = isTruncated
+                            ? 'px-4 py-2 max-w-[200px] truncate' 
+                            : 'px-4 py-2 whitespace-nowrap';
+                        const titleAttr = isTruncated ? ` title="${escapeHtml(rawVal)}"` : '';
+
+                        return `<td class="${tdClass}"${titleAttr}>${display}${badge}</td>`;
+                    }).join('');
+                    return `<tr class="${matched ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'} transition-colors">${cells}</tr>`;
+                }).join('');
+            }
+
+            // Inject reconciliation block above the CSV table
+            const tableDiv = document.querySelector('#csv-modal .flex-1');
+            const old = document.getElementById('recon-status-block');
+            if (old) old.remove();
+            
+            const block = document.createElement('div');
+            block.id = 'recon-status-block';
+            block.className = 'px-6 py-4 border-b border-slate-200 bg-slate-50 flex-shrink-0';
+            
+            if (reconciliation.length > 0) {
+                block.innerHTML = `<p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">📋 Invoice Payment Status</p>
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead><tr class="text-slate-400 uppercase text-[10px] font-bold border-b border-slate-200">
+                            <th class="px-4 py-2">Invoice</th><th class="px-4 py-2">Amount</th>
+                            <th class="px-4 py-2">Status</th><th class="px-4 py-2">Matched Transaction</th></tr></thead>
+                        <tbody>${reconRows}</tbody></table>`;
+            } else {
+                block.innerHTML = `<p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">📋 Invoice Payment Status</p>
+                    <div class="text-center py-4 bg-white border border-slate-200 rounded-lg">
+                        <p class="text-sm text-slate-500">No invoices loaded.</p>
+                        <p class="text-xs text-slate-400 mt-1">Upload invoice files in the main dashboard first to reconcile them against this statement.</p>
+                    </div>`;
+            }
+            tableDiv.parentNode.insertBefore(block, tableDiv);
+            document.getElementById('csv-modal').classList.remove('hidden');
+        }
+
+        function closeCsvModal() {
+            document.getElementById('csv-modal').classList.add('hidden');
+        }
+        document.getElementById('csv-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeCsvModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeCsvModal();
+        });
+
+
+
+    </script>
+</body>
